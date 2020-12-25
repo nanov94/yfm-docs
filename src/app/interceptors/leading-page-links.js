@@ -29,16 +29,19 @@
                 event.preventDefault();
 
                 const href = event.target.href;
-                const pathWithExtRegex = /\.\w+$/i;
+                const startWith = /(file:|storage\.yandexcloud\.net)/i;
 
-                if (!href.startsWith('http')) {
+                if (startWith.test(href)) {
+                    const mainFileName = 'index';
+                    const extention = 'html';
+
                     if (href.endsWith('/')) {
-                        window.location.href = href + 'index.html';
+                        window.location.href = `${href}${mainFileName}.${extention}`;
                         return;
                     }
 
-                    if (!pathWithExtRegex.test(href)) {
-                        window.location.href = href + '.html';
+                    if (href.endsWith(`/${mainFileName}`)) {
+                        window.location.href = `${href}.${extention}`;
                         return;
                     }
                 }
