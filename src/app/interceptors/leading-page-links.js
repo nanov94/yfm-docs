@@ -29,9 +29,9 @@
                 event.preventDefault();
 
                 const href = event.target.href;
-                const startWith = /(file:|storage\.yandexcloud\.net)/i;
+                const locationOrigin = window.location.origin;
 
-                if (startWith.test(href)) {
+                if (href.startsWith(locationOrigin)) {
                     const mainFileName = 'index';
                     const extention = '.html';
 
@@ -45,7 +45,7 @@
                         return;
                     }
 
-                    const splitedHref = href.split(/\?|#/);
+                    const splitedHref = href.split('#');
                     if (splitedHref.length > 1 && !splitedHref[0].endsWith(extention)) {
                         splitedHref[0] += extention;
                         window.location.href = splitedHref.join('');
