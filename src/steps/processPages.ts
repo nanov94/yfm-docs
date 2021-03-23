@@ -1,6 +1,6 @@
 import {basename, dirname, extname, resolve, join, relative} from 'path';
 import shell from 'shelljs';
-import {copyFileSync, writeFileSync} from 'fs';
+import {copyFileSync, readFileSync, writeFileSync} from 'fs';
 import {bold} from 'chalk';
 
 import log from '@doc-tools/transform/lib/log';
@@ -15,9 +15,15 @@ import {Client, ContributorDTO} from '../client/models';
 const singlePageResults: Record<string, SinglePageResult[]> = {};
 const singlePagePaths: Record<string, Set<string>> = {};
 
+interface FileData {
+    tmpInputfilePath: string;
+    inputFolderPathLength: number;
+    fileContent: string;
+    allContributors: Contributors;
+}
+
 // Processes files of documentation (like index.yaml, *.md)
 export async function processPages(tmpInputFolder: string, outputBundlePath: string, client: Client): Promise<void> {
-
     const {
         input: inputFolderPath,
         output: outputFolderPath,
@@ -27,6 +33,7 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
 
     const allContributors = await getAllContributors(client);
     const contributorsExist = Object.getOwnPropertyNames(allContributors);
+    const inputFolderPathLength = inputFolderPath.length;
 
     for (const pathToFile of TocService.getNavigationPaths()) {
         const pathToDir: string = dirname(pathToFile);
@@ -71,8 +78,13 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
                 outputFileContent = resolveMd2Md({inputPath: pathToFile, outputPath: outputDir});
 
                 if (contributorsExist) {
-                    const fileContributors = await client.getLogsByPath(pathToFile);
-                    outputFileContent = await addMetadata(outputFileContent, allContributors, fileContributors);
+                    const fileData: FileData = {
+                        tmpInputfilePath: resolvedPathToFile,
+                        inputFolderPathLength,
+                        fileContent: outputFileContent,
+                        allContributors,
+                    };
+                    outputFileContent = await addMetadata(fileData, client);
                 }
 
                 if (outputSinglePageFileDir &&
@@ -153,7 +165,7 @@ async function getAllContributors(client: Client): Promise<Contributors> {
     }
 }
 
-async function addMetadata(fileContent: string, allContributors: Contributors, fileContributors: Contributors): Promise<string> {
+async function addMetadata(fileData: FileData, client: Client): Promise<string> {
     // Search by format:
     // ---
     // metaName1: metaValue1
@@ -166,9 +178,10 @@ async function addMetadata(fileContent: string, allContributors: Contributors, f
     // main content 123
     const regexpFileContent = '---((.*\\r\\n)*)';
     const regexpParseFileContent = new RegExp(`${regexpMetadata}${regexpFileContent}`, 'gm');
-    const matches = regexpParseFileContent.exec(fileContent);
+    const matches = regexpParseFileContent.exec(fileData.fileContent);
 
-    const contributorsValue = await getFileContributors(allContributors, fileContributors);
+    const contributorsValue = await getFileContributors(fileData, client);
+
 
     if (matches && matches.length > 0) {
         const [, fileMetadata, , fileMainContent] = matches;
@@ -176,13 +189,25 @@ async function addMetadata(fileContent: string, allContributors: Contributors, f
         return `${getUpdatedMetadata(contributorsValue, fileMetadata)}${fileMainContent}`;
     }
 
-    return `${getUpdatedMetadata(contributorsValue)}${fileContent}`;
+    return `${getUpdatedMetadata(contributorsValue)}${fileData.fileContent}`;
 }
 
-async function getFileContributors(allContributors: Contributors, fileContributors: Contributors): Promise<string> {
+async function getFileContributors(fileData: FileData, client: Client): Promise<string> {
+    const {tmpInputfilePath, inputFolderPathLength, allContributors} = fileData;
+
+    const relativeFilePath = tmpInputfilePath.substring(inputFolderPathLength);
+    const fileContributors = await client.getLogsByPath(relativeFilePath);
+
+    const contributorsForIncludedFiles = await getContributorsForIncludedFiles(fileData, client);
+
+    const fileContributorsWithContributorsIncludedFiles: Contributors = {
+        ...fileContributors,
+        ...contributorsForIncludedFiles,
+    };
+
     const contributors: Contributor[] = [];
 
-    Object.keys(fileContributors).forEach((login: string) => {
+    Object.keys(fileContributorsWithContributorsIncludedFiles).forEach((login: string) => {
         if (allContributors[login]) {
             contributors.push({
                 ...fileContributors[login],
@@ -192,6 +217,52 @@ async function getFileContributors(allContributors: Contributors, fileContributo
     });
 
     return `contributors: ${JSON.stringify(contributors)}`;
+}
+
+async function getContributorsForIncludedFiles(fileData: FileData, client: Client): Promise<Contributors> {
+    const {tmpInputfilePath, inputFolderPathLength, fileContent} = fileData;
+
+    // Inxlude example: {% include [createfolder](create-folder.md) %}
+    // [createfolder](create-folder.md)
+    const regexpIncludeContents = /(?<=[{%]\sinclude\s).+(?=\s[%}])/gm;
+    // create-folder.md
+    const regexpIncludeFilePath = /(?<=[(]).+(?=[)])/g;
+
+    const includeContents = fileContent.match(regexpIncludeContents);
+    if (!includeContents || includeContents.length === 0) {
+        return {};
+    }
+
+    const promises: Promise<Contributors>[] = [];
+    const nestedContributors: Contributors[] = [];
+
+    for (const includeContent of includeContents) {
+        const match = includeContent.match(regexpIncludeFilePath);
+
+        if (match && match.length !== 0) {
+            const includeFilePath = join(dirname(tmpInputfilePath), match[0]);
+            const contributorsForNestedFiles = await getContributorsForNestedFiles(includeFilePath, fileData, client);
+            nestedContributors.push(contributorsForNestedFiles);
+
+            promises.push(client.getLogsByPath(includeFilePath.substring(inputFolderPathLength)));
+        }
+    }
+
+    const contributors: Contributors[] = await Promise.all(promises);
+
+    return Object.assign({}, ...contributors, ...nestedContributors);
+}
+
+async function getContributorsForNestedFiles(includeFilePath: string, fileData: FileData, client: Client): Promise<Contributors> {
+    const contentIncludeFile: string = readFileSync(includeFilePath, 'utf8');
+
+    const newFileData: FileData = {
+        ...fileData,
+        fileContent: contentIncludeFile,
+        tmpInputfilePath: includeFilePath,
+    };
+
+    return getContributorsForIncludedFiles(newFileData, client);
 }
 
 function getUpdatedMetadata(metaContributorsValue: string, defaultMetadata = ''): string {
