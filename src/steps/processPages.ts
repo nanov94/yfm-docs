@@ -46,73 +46,36 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
         const outputFileName = `${fileBaseName}.${outputFormat}`;
         const outputPath: string = resolve(outputDir, outputFileName);
 
-        let outputSinglePageDir, outputSinglePageFileDir;
-        if (outputFormat === 'md' && singlePage) {
-            outputSinglePageDir = resolve(TocService.getTocDir(outputPath), SINGLE_PAGE_FOLDER);
-            outputSinglePageFileDir = resolve(outputSinglePageDir, pathToDir);
-        }
+        const isMdOutputFormat = outputFormat === 'md';
+        const isYamlExtension = fileExtension === '.yaml';
 
         logger.proc(resolvedPathToFile.replace(tmpInputFolder, ''));
+
+        if (singlePage && isMdOutputFormat) {
+            preparingSinglePages(isYamlExtension, outputPath, pathToDir, singlePage, pathToFile, outputFolderPath);
+        }
 
         try {
             let outputFileContent = '';
 
             shell.mkdir('-p', outputDir);
-            if (outputSinglePageFileDir) {
-                shell.mkdir('-p', outputSinglePageFileDir);
-            }
 
-            if (fileBaseName === 'index' && fileExtension === '.yaml') {
+            if (fileBaseName === 'index' && isYamlExtension) {
                 LeadingService.filterFile(pathToFile);
             }
 
-            if (outputFormat === 'md') {
-                if (fileExtension === '.yaml') {
-                    const from = resolvedPathToFile;
-                    const to = resolve(outputDir, filename);
-
-                    copyFileSync(from, to);
+            if (isMdOutputFormat) {
+                if (isYamlExtension) {
+                    copyFileWithoutChanges(resolvedPathToFile, outputDir, filename);
                     continue;
                 }
 
                 outputFileContent = resolveMd2Md({inputPath: pathToFile, outputPath: outputDir});
-
-                if (contributorsExist) {
-                    const fileData: FileData = {
-                        tmpInputfilePath: resolvedPathToFile,
-                        inputFolderPathLength,
-                        fileContent: outputFileContent,
-                        allContributors,
-                    };
-                    outputFileContent = await addMetadata(fileData, client);
-                }
-
-                if (outputSinglePageFileDir &&
-                    outputSinglePageDir &&
-                    !(singlePagePaths[outputSinglePageDir] && singlePagePaths[outputSinglePageDir].has(pathToFile))
-                ) {
-                    const outputSinglePageContent = resolveMd2Md({inputPath: pathToFile, outputPath: outputSinglePageFileDir, singlePage});
-
-                    const absolutePathToFile = resolve(outputFolderPath, pathToFile);
-                    const relativePathToOriginalFile = relative(outputSinglePageDir, absolutePathToFile);
-
-                    singlePageResults[outputSinglePageDir] = singlePageResults[outputSinglePageDir] || [];
-                    singlePageResults[outputSinglePageDir].push({
-                        path: relativePathToOriginalFile,
-                        content: outputSinglePageContent,
-                    });
-
-                    singlePagePaths[outputSinglePageDir] = singlePagePaths[outputSinglePageDir] || new Set();
-                    singlePagePaths[outputSinglePageDir].add(pathToFile);
-                }
             }
 
             if (outputFormat === 'html') {
-                if (fileExtension !== '.yaml' && fileExtension !== '.md') {
-                    const from = resolvedPathToFile;
-                    const to = resolve(outputDir, filename);
-
-                    copyFileSync(from, to);
+                if (!isYamlExtension && fileExtension !== '.md') {
+                    copyFileWithoutChanges(resolvedPathToFile, outputDir, filename);
                     continue;
                 }
 
@@ -125,17 +88,20 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
                 });
             }
 
+            if (contributorsExist) {
+                const fileData: FileData = {
+                    tmpInputfilePath: resolvedPathToFile,
+                    inputFolderPathLength,
+                    fileContent: outputFileContent,
+                    allContributors,
+                };
+                outputFileContent = await addMetadata(fileData, client);
+            }
+
             writeFileSync(outputPath, outputFileContent);
         } catch (e) {
             console.log(e);
             log.error(` No such file or has no access to ${bold(resolvedPathToFile)}`);
-        }
-
-        if (outputSinglePageDir && outputSinglePageDir) {
-            const singlePageFn = join(outputSinglePageDir, 'index.md');
-            const content = joinSinglePageResults(singlePageResults[outputSinglePageDir]);
-
-            writeFileSync(singlePageFn, content);
         }
     }
 }
@@ -163,6 +129,54 @@ async function getAllContributors(client: Client): Promise<Contributors> {
         log.error(`Getting contributors was failed. Error: ${JSON.stringify(error)}`);
         throw error;
     }
+}
+
+function preparingSinglePages(
+    isYamlExtension: boolean,
+    outputPath: string,
+    pathToDir: string,
+    singlePage: boolean,
+    pathToFile: string,
+    outputFolderPath: string,
+): void {
+    try {
+        const outputSinglePageDir = resolve(TocService.getTocDir(outputPath), SINGLE_PAGE_FOLDER);
+        const outputSinglePageFileDir = resolve(outputSinglePageDir, pathToDir);
+
+        shell.mkdir('-p', outputSinglePageFileDir);
+
+        const isExistFileAsSinglePage = singlePagePaths[outputSinglePageDir] && singlePagePaths[outputSinglePageDir].has(pathToFile);
+
+        if (!isYamlExtension && !isExistFileAsSinglePage) {
+            const outputSinglePageContent = resolveMd2Md({inputPath: pathToFile, outputPath: outputSinglePageFileDir, singlePage});
+
+            const absolutePathToFile = resolve(outputFolderPath, pathToFile);
+            const relativePathToOriginalFile = relative(outputSinglePageDir, absolutePathToFile);
+
+            singlePageResults[outputSinglePageDir] = singlePageResults[outputSinglePageDir] || [];
+            singlePageResults[outputSinglePageDir].push({
+                path: relativePathToOriginalFile,
+                content: outputSinglePageContent,
+            });
+
+            singlePagePaths[outputSinglePageDir] = singlePagePaths[outputSinglePageDir] || new Set();
+            singlePagePaths[outputSinglePageDir].add(pathToFile);
+        }
+
+        const singlePageFn = join(outputSinglePageDir, 'index.md');
+        const content = joinSinglePageResults(singlePageResults[outputSinglePageDir]);
+
+        writeFileSync(singlePageFn, content);
+    } catch (error) {
+        console.log(error);
+    }
+}
+
+function copyFileWithoutChanges(resolvedPathToFile: string, outputDir: string, filename: string): void {
+    const from = resolvedPathToFile;
+    const to = resolve(outputDir, filename);
+
+    copyFileSync(from, to);
 }
 
 async function addMetadata(fileData: FileData, client: Client): Promise<string> {
