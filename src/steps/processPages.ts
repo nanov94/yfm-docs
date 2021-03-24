@@ -30,6 +30,7 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
         outputFormat,
         singlePage,
         contributors,
+        resolveConditions,
     } = ArgvService.getConfig();
 
     const allContributors = await getAllContributors(client);
@@ -63,7 +64,7 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
                 shell.mkdir('-p', outputSinglePageFileDir);
             }
 
-            if (fileBaseName === 'index' && fileExtension === '.yaml') {
+            if (resolveConditions && fileBaseName === 'index' && fileExtension === '.yaml') {
                 LeadingService.filterFile(pathToFile);
             }
 
@@ -92,7 +93,11 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
                     outputSinglePageDir &&
                     !(singlePagePaths[outputSinglePageDir] && singlePagePaths[outputSinglePageDir].has(pathToFile))
                 ) {
-                    const outputSinglePageContent = resolveMd2Md({inputPath: pathToFile, outputPath: outputSinglePageFileDir, singlePage});
+                    const outputSinglePageContent = resolveMd2Md({
+                        inputPath: pathToFile,
+                        outputPath: outputSinglePageFileDir,
+                        singlePage,
+                    });
 
                     const absolutePathToFile = resolve(outputFolderPath, pathToFile);
                     const relativePathToOriginalFile = relative(outputSinglePageDir, absolutePathToFile);
