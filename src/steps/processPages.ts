@@ -42,6 +42,7 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
         outputFormat,
         singlePage,
         contributors,
+        resolveConditions,
     } = ArgvService.getConfig();
 
     const allContributors = await getAllContributors(client);
@@ -61,9 +62,14 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
 
         console.log('>>>>>>>>>>>>>>>>>>>>>', pathToFile);
         if (pathToFile.includes('en') === true) {
-            promises.push(preparingPagesByOutputFormat(pathData, client, allContributors, isContributorsExist, inputFolderPathLength));
+            promises.push(preparingPagesByOutputFormat(
+                pathData,
+                client,
+                allContributors,
+                isContributorsExist,
+                inputFolderPathLength,
+                resolveConditions));
         }
-
     }
 
     try {
@@ -102,7 +108,13 @@ function getPathData(
     return pathData;
 }
 
-async function preparingPagesByOutputFormat(path: PathData, client: Client, allContributors: Contributors, isContributorsExist: boolean, inputFolderPathLength: number): Promise<void> {
+async function preparingPagesByOutputFormat(
+    path: PathData,
+    client: Client,
+    allContributors: Contributors,
+    isContributorsExist: boolean,
+    inputFolderPathLength: number,
+    resolveConditions: boolean): Promise<void> {
     const {
         outputBundlePath,
         filename,
@@ -123,7 +135,7 @@ async function preparingPagesByOutputFormat(path: PathData, client: Client, allC
 
         shell.mkdir('-p', outputDir);
 
-        if (fileBaseName === 'index' && isYamlExtension) {
+        if (resolveConditions && fileBaseName === 'index' && isYamlExtension) {
             LeadingService.filterFile(pathToFile);
         }
 
@@ -203,10 +215,12 @@ function preparingSinglePages(pathData: PathData, singlePage: boolean, outputFol
 
         shell.mkdir('-p', outputSinglePageFileDir);
 
-        const isExistFileAsSinglePage = singlePagePaths[outputSinglePageDir] && singlePagePaths[outputSinglePageDir].has(pathToFile);
+        const isExistFileAsSinglePage =
+            singlePagePaths[outputSinglePageDir] && singlePagePaths[outputSinglePageDir].has(pathToFile);
 
         if (!(fileExtension === '.yaml') && !isExistFileAsSinglePage) {
-            const outputSinglePageContent = resolveMd2Md({inputPath: pathToFile, outputPath: outputSinglePageFileDir, singlePage});
+            const outputSinglePageContent =
+                resolveMd2Md({inputPath: pathToFile, outputPath: outputSinglePageFileDir, singlePage});
 
             const absolutePathToFile = resolve(outputFolderPath, pathToFile);
             const relativePathToOriginalFile = relative(outputSinglePageDir, absolutePathToFile);
