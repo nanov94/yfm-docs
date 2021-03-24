@@ -41,10 +41,11 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
         output: outputFolderPath,
         outputFormat,
         singlePage,
+        contributors,
     } = ArgvService.getConfig();
 
     const allContributors = await getAllContributors(client);
-    const isContributorsExist = Object.getOwnPropertyNames(allContributors).length > 0;
+    const isContributorsExist = Object.getOwnPropertyNames(allContributors).length > 0 && contributors;
     const inputFolderPathLength = inputFolderPath.length;
 
     const promises: Promise<void>[] = [];
