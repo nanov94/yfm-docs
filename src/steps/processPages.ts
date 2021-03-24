@@ -22,6 +22,18 @@ interface FileData {
     allContributors: Contributors;
 }
 
+interface PathData {
+    pathToFile: string;
+    resolvedPathToFile: string;
+    filename: string;
+    fileBaseName: string;
+    fileExtension: string;
+    outputDir: string;
+    outputPath: string;
+    outputFormat: string;
+    outputBundlePath: string;
+}
+
 // Processes files of documentation (like index.yaml, *.md)
 export async function processPages(tmpInputFolder: string, outputBundlePath: string, client: Client): Promise<void> {
     const {
@@ -32,77 +44,118 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
     } = ArgvService.getConfig();
 
     const allContributors = await getAllContributors(client);
-    const contributorsExist = Object.getOwnPropertyNames(allContributors);
+    const isContributorsExist = Object.getOwnPropertyNames(allContributors).length > 0;
     const inputFolderPathLength = inputFolderPath.length;
 
+    const promises: Promise<void>[] = [];
+
     for (const pathToFile of TocService.getNavigationPaths()) {
-        const pathToDir: string = dirname(pathToFile);
-        const filename: string = basename(pathToFile);
-        const fileExtension: string = extname(pathToFile);
-        const fileBaseName: string = basename(filename, fileExtension);
-        const outputDir = resolve(outputFolderPath, pathToDir);
-        const resolvedPathToFile = resolve(inputFolderPath, pathToFile);
+        const pathData = getPathData(pathToFile, inputFolderPath, outputFolderPath, outputFormat, outputBundlePath);
 
-        const outputFileName = `${fileBaseName}.${outputFormat}`;
-        const outputPath: string = resolve(outputDir, outputFileName);
+        logger.proc(pathData.resolvedPathToFile.replace(tmpInputFolder, ''));
 
+        if (singlePage && outputFormat === 'md') {
+            preparingSinglePages(pathData, singlePage, outputFolderPath);
+        }
+
+        promises.push(preparingPagesByOutputFormat(pathData, client, allContributors, isContributorsExist, inputFolderPathLength));
+    }
+
+    await Promise.all(promises);
+}
+
+function getPathData(
+    pathToFile: string,
+    inputFolderPath: string,
+    outputFolderPath: string,
+    outputFormat: string,
+    outputBundlePath: string,
+): PathData {
+    const pathToDir: string = dirname(pathToFile);
+    const filename: string = basename(pathToFile);
+    const fileExtension: string = extname(pathToFile);
+    const fileBaseName: string = basename(filename, fileExtension);
+    const outputDir = resolve(outputFolderPath, pathToDir);
+    const outputFileName = `${fileBaseName}.${outputFormat}`;
+
+    const pathData: PathData = {
+        pathToFile,
+        resolvedPathToFile: resolve(inputFolderPath, pathToFile),
+        filename,
+        fileBaseName,
+        fileExtension,
+        outputDir,
+        outputPath: resolve(outputDir, outputFileName),
+        outputFormat,
+        outputBundlePath,
+    };
+
+    return pathData;
+}
+
+async function preparingPagesByOutputFormat(path: PathData, client: Client, allContributors: Contributors, isContributorsExist: boolean, inputFolderPathLength: number): Promise<void> {
+    const {
+        outputBundlePath,
+        filename,
+        fileExtension,
+        fileBaseName,
+        outputDir,
+        resolvedPathToFile,
+        outputPath,
+        outputFormat,
+        pathToFile,
+    } = path;
+
+    try {
         const isMdOutputFormat = outputFormat === 'md';
         const isYamlExtension = fileExtension === '.yaml';
 
-        logger.proc(resolvedPathToFile.replace(tmpInputFolder, ''));
+        let outputFileContent = '';
 
-        if (singlePage && isMdOutputFormat) {
-            preparingSinglePages(isYamlExtension, outputPath, pathToDir, singlePage, pathToFile, outputFolderPath);
+        shell.mkdir('-p', outputDir);
+
+        if (fileBaseName === 'index' && isYamlExtension) {
+            LeadingService.filterFile(pathToFile);
         }
 
-        try {
-            let outputFileContent = '';
-
-            shell.mkdir('-p', outputDir);
-
-            if (fileBaseName === 'index' && isYamlExtension) {
-                LeadingService.filterFile(pathToFile);
+        if (isMdOutputFormat) {
+            if (isYamlExtension) {
+                copyFileWithoutChanges(resolvedPathToFile, outputDir, filename);
+                return;
             }
 
-            if (isMdOutputFormat) {
-                if (isYamlExtension) {
-                    copyFileWithoutChanges(resolvedPathToFile, outputDir, filename);
-                    continue;
-                }
-
-                outputFileContent = resolveMd2Md({inputPath: pathToFile, outputPath: outputDir});
-            }
-
-            if (outputFormat === 'html') {
-                if (!isYamlExtension && fileExtension !== '.md') {
-                    copyFileWithoutChanges(resolvedPathToFile, outputDir, filename);
-                    continue;
-                }
-
-                outputFileContent = resolveMd2HTML({
-                    inputPath: pathToFile,
-                    outputBundlePath,
-                    fileExtension,
-                    outputPath,
-                    filename,
-                });
-            }
-
-            if (contributorsExist) {
-                const fileData: FileData = {
-                    tmpInputfilePath: resolvedPathToFile,
-                    inputFolderPathLength,
-                    fileContent: outputFileContent,
-                    allContributors,
-                };
-                outputFileContent = await addMetadata(fileData, client);
-            }
-
-            writeFileSync(outputPath, outputFileContent);
-        } catch (e) {
-            console.log(e);
-            log.error(` No such file or has no access to ${bold(resolvedPathToFile)}`);
+            outputFileContent = resolveMd2Md({inputPath: pathToFile, outputPath: outputDir});
         }
+
+        if (outputFormat === 'html') {
+            if (!isYamlExtension && fileExtension !== '.md') {
+                copyFileWithoutChanges(resolvedPathToFile, outputDir, filename);
+                return;
+            }
+
+            outputFileContent = resolveMd2HTML({
+                inputPath: pathToFile,
+                outputBundlePath,
+                fileExtension,
+                outputPath,
+                filename,
+            });
+        }
+
+        if (isContributorsExist) {
+            const fileData: FileData = {
+                tmpInputfilePath: resolvedPathToFile,
+                inputFolderPathLength,
+                fileContent: outputFileContent,
+                allContributors,
+            };
+            outputFileContent = await addMetadata(fileData, client);
+        }
+
+        writeFileSync(outputPath, outputFileContent);
+    } catch (e) {
+        console.log(e);
+        log.error(` No such file or has no access to ${bold(resolvedPathToFile)}`);
     }
 }
 
@@ -131,15 +184,10 @@ async function getAllContributors(client: Client): Promise<Contributors> {
     }
 }
 
-function preparingSinglePages(
-    isYamlExtension: boolean,
-    outputPath: string,
-    pathToDir: string,
-    singlePage: boolean,
-    pathToFile: string,
-    outputFolderPath: string,
-): void {
+function preparingSinglePages(pathData: PathData, singlePage: boolean, outputFolderPath: string): void {
     try {
+        const {pathToFile, outputPath, fileExtension} = pathData;
+        const pathToDir: string = dirname(pathToFile);
         const outputSinglePageDir = resolve(TocService.getTocDir(outputPath), SINGLE_PAGE_FOLDER);
         const outputSinglePageFileDir = resolve(outputSinglePageDir, pathToDir);
 
@@ -147,7 +195,7 @@ function preparingSinglePages(
 
         const isExistFileAsSinglePage = singlePagePaths[outputSinglePageDir] && singlePagePaths[outputSinglePageDir].has(pathToFile);
 
-        if (!isYamlExtension && !isExistFileAsSinglePage) {
+        if (!(fileExtension === '.yaml') && !isExistFileAsSinglePage) {
             const outputSinglePageContent = resolveMd2Md({inputPath: pathToFile, outputPath: outputSinglePageFileDir, singlePage});
 
             const absolutePathToFile = resolve(outputFolderPath, pathToFile);
@@ -254,7 +302,9 @@ async function getContributorsForIncludedFiles(fileData: FileData, client: Clien
         const match = includeContent.match(regexpIncludeFilePath);
 
         if (match && match.length !== 0) {
-            const includeFilePath = join(dirname(tmpInputfilePath), match[0]);
+            const includeFilePathWithoutFragment = match[0].split('#');
+
+            const includeFilePath = join(dirname(tmpInputfilePath), includeFilePathWithoutFragment[0]);
             const contributorsForNestedFiles = await getContributorsForNestedFiles(includeFilePath, fileData, client);
             nestedContributors.push(contributorsForNestedFiles);
 
