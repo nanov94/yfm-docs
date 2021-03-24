@@ -16,6 +16,8 @@ import {ArgvService} from './services';
 import {argvValidator} from './validator';
 import {getClient} from './client/client';
 
+const firstDate = Date.now();
+
 const dotEnvPath = resolve(process.cwd(), '.env');
 dotEnv.config({path: dotEnvPath});
 
@@ -165,6 +167,8 @@ async function asyncProcess() {
     shell.rm('-rf', tmpInputFolder, tmpOutputFolder);
 
     processLogs(tmpInputFolder);
+
+    console.log('>>>>>>>>>>> ', firstDate, Date.now());
 }
 
 asyncProcess();

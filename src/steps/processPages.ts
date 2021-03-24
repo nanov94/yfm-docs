@@ -59,10 +59,18 @@ export async function processPages(tmpInputFolder: string, outputBundlePath: str
             preparingSinglePages(pathData, singlePage, outputFolderPath);
         }
 
-        promises.push(preparingPagesByOutputFormat(pathData, client, allContributors, isContributorsExist, inputFolderPathLength));
+        console.log('>>>>>>>>>>>>>>>>>>>>>', pathToFile);
+        if (pathToFile.includes('en') === true) {
+            promises.push(preparingPagesByOutputFormat(pathData, client, allContributors, isContributorsExist, inputFolderPathLength));
+        }
+
     }
 
-    await Promise.all(promises);
+    try {
+        await Promise.all(promises);
+    } catch (error) {
+        console.log('>>>>>>>>>>>>>>>>>>>>>', error);
+    }
 }
 
 function getPathData(
@@ -143,6 +151,7 @@ async function preparingPagesByOutputFormat(path: PathData, client: Client, allC
             });
         }
 
+        console.log('*************** ', pathToFile);
         if (isContributorsExist) {
             const fileData: FileData = {
                 tmpInputfilePath: resolvedPathToFile,
